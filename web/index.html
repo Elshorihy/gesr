@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#12141c">
+<title>جسر — نقل الملفات</title>
+<style>
+:root{color-scheme:dark;--bg:#12141c;--panel:#1c1f2a;--card:#242836;--cyan:#00c8e2;--muted:#9ca3b8;--good:#50d282;--bad:#f05a5a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#e8eaf0;font-family:Tahoma,Arial,sans-serif;min-height:100vh}
+header{background:var(--panel);border-bottom:1px solid #303545;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{margin:0;color:var(--cyan);font-size:25px}
+main{width:min(780px,100%);margin:auto;padding:14px}
+.card{background:var(--card);border:1px solid #303545;border-radius:15px;padding:16px;margin:12px 0;box-shadow:0 8px 24px #0002}
+h2{font-size:16px;color:var(--cyan);margin:0 0 12px}
+.muted{color:var(--muted);font-size:12px}
+#status{padding:6px 0;line-height:1.8}
+.line{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+button{background:var(--cyan);color:#071318;border:0;border-radius:9px;padding:10px 15px;font-weight:bold;cursor:pointer}
+button.ghost{background:transparent;color:var(--cyan);border:1px solid var(--cyan)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;flex-direction:column;gap:8px;padding:13px 0;border-bottom:1px solid #353a49}
+.row:last-child{border:0}
+.name{font-weight:bold;overflow-wrap:anywhere;flex:1}
+.bar{height:7px;background:var(--panel);border-radius:10px;overflow:hidden}
+.bar i{display:block;width:0;height:100%;background:var(--cyan);transition:width .15s}
+.row.ok .bar i{background:var(--good)}.row.err .bar i{background:var(--bad)}
+.drop{border:2px dashed #00c8e2;border-radius:13px;padding:25px 14px;text-align:center;color:var(--muted);cursor:pointer;line-height:1.8}
+.drop.over{background:#171d28;color:#fff}
+.empty{color:var(--muted);padding:10px 0}
+.cred{text-align:center;color:var(--cyan);font-weight:bold;padding:18px;font-size:12px}
+#conn{border:1px solid #485064;border-radius:20px;padding:6px 10px}
+@media(max-width:480px){header{padding:13px 15px}main{padding:8px}.card{padding:13px}.line button{flex:1}}
+</style>
+</head>
+<body>
+<header><h1>جسر</h1><span class="muted" id="conn">غير متصل</span></header>
+<main>
+<section class="card">
+  <div id="status">جاري الاتصال...</div>
+  <div class="muted" id="pcname"></div>
+  <div class="line" style="margin-top:12px">
+    <button class="ghost" id="btnTok">إدخال التوكن يدويًا</button>
+    <button class="ghost" id="btnRefresh">تحديث القائمة</button>
+  </div>
+</section>
+<section class="card"><h2>ملفات الكمبيوتر</h2><div id="files"><div class="empty">في انتظار الاتصال...</div></div></section>
+<section class="card">
+  <h2>رفع ملفات للكمبيوتر</h2>
+  <div class="drop" id="drop">اضغط لاختيار الملفات أو اسحبها هنا<br><span class="muted">يمكنك اختيار أكثر من ملف</span></div>
+  <input type="file" id="pick" multiple hidden>
+  <div id="uploads" style="margin-top:12px"></div>
+</section>
+<div class="cred">تم التطوير بواسطة حمزة شاهين</div>
+</main>
+<script>
+'use strict';
+let token='',connected=false;
+const $=id=>document.getElementById(id);
+const fmt=n=>{if(n<1024)return n+' B';const u=['KB','MB','GB','TB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<3);return n.toFixed(2)+' '+u[i]};
+const setStatus=t=>$('status').textContent=t;
+function readToken(){const m=location.hash.match(/(?:^|[&#])t=([0-9a-fA-F]+)/);return m?m[1]:''}
+function req(method,path,body,onProgress,mode,responseType){
+ return new Promise((resolve,reject)=>{
+  const x=new XMLHttpRequest();x.open(method,path,true);x.setRequestHeader('X-Token',token);
+  if(responseType)x.responseType=responseType;
+  if(onProgress){const target=mode==='up'?x.upload:x;target.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded,e.total)}}
+  x.onload=()=>{if(x.status>=200&&x.status<300)resolve(x);else if(x.status===401)reject(Error('التوكن غير صحيح. افتح الرابط من برنامج جسر أو أدخله من جديد.'));else if(x.status===403)reject(Error('الاتصال مسموح به من الشبكة المحلية فقط.'));else reject(Error('خطأ من الكمبيوتر ('+x.status+')'))};
+  x.onerror=()=>reject(Error('تعذر الاتصال بالكمبيوتر. تأكد أن برنامج جسر يعمل وأن الجهازين على نفس شبكة Wi‑Fi.'));
+  x.send(body??null);
+ });
+}
+function makeRow(title){
+ const el=document.createElement('div');el.className='row';
+ const line=document.createElement('div');line.className='line';
+ const name=document.createElement('div');name.className='name';name.textContent=title;
+ const right=document.createElement('span');right.className='muted';
+ line.append(name,right);
+ const bar=document.createElement('div');bar.className='bar';const fill=document.createElement('i');bar.append(fill);
+ const info=document.createElement('div');info.className='muted';
+ el.append(line,bar,info);return{el,right,fill,info,line};
+}
+function progress(r,d,t){const p=t?Math.floor(d*100/t):0;r.fill.style.width=p+'%';r.info.textContent=p+'% — '+fmt(d)+' / '+fmt(t)}
+async function connect(){
+ token=readToken()||token;
+ if(!token){setStatus('لا يوجد توكن. افتح الرابط من برنامج الكمبيوتر أو أدخل التوكن يدويًا.');return}
+ setStatus('جاري الاتصال بالكمبيوتر...');
+ try{const x=await req('GET','/ping');const j=JSON.parse(x.responseText);connected=true;$('conn').textContent='متصل';$('pcname').textContent='الكمبيوتر: '+(j.name||'متصل');setStatus('تم الاتصال. يمكنك رفع الملفات أو تنزيلها.');await loadFiles()}
+ catch(e){connected=false;$('conn').textContent='غير متصل';setStatus(e.message)}
+}
+async function loadFiles(){
+ try{const x=await req('GET','/files');const list=JSON.parse(x.responseText);const box=$('files');box.replaceChildren();
+  if(!list.length){const e=document.createElement('div');e.className='empty';e.textContent='لا توجد ملفات مشاركة حاليًا.';box.append(e);return}
+  list.forEach(f=>{const r=makeRow(f.name);r.right.textContent=fmt(f.size);const b=document.createElement('button');b.textContent='تحميل';b.onclick=()=>download(f,r);r.line.append(b);r.info.textContent='جاهز للتحميل';box.append(r.el)})
+ }catch(e){setStatus(e.message)}
+}
+async function download(f,r){
+ r.info.textContent='جاري التحميل...';r.el.className='row';
+ try{const x=await req('GET','/download/'+encodeURIComponent(f.id),null,(d,t)=>progress(r,d,t),'down','blob');const url=URL.createObjectURL(x.response);const a=document.createElement('a');a.href=url;a.download=f.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);r.el.className='row ok';r.fill.style.width='100%';r.info.textContent='اكتمل التحميل — '+fmt(f.size)}
+ catch(e){r.el.className='row err';r.info.textContent=e.message}
+}
+async function upload(file){
+ const r=makeRow(file.name);r.right.textContent=fmt(file.size);$('uploads').prepend(r.el);r.info.textContent='جاري الرفع...';
+ try{await req('POST','/upload?name='+encodeURIComponent(file.name),file,(d,t)=>progress(r,d,t),'up');r.el.className='row ok';r.fill.style.width='100%';r.info.textContent='تم الرفع وحُفظ الملف في مجلد جسر على الكمبيوتر'}
+ catch(e){r.el.className='row err';r.info.textContent=e.message}
+}
+async function uploadAll(files){if(!connected){setStatus('اتصل بالكمبيوتر أولًا.');return}for(const f of files)await upload(f)}
+const drop=$('drop'),pick=$('pick');
+drop.onclick=()=>pick.click();pick.onchange=()=>{uploadAll([...pick.files]);pick.value=''};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');uploadAll([...e.dataTransfer.files])};
+$('btnRefresh').onclick=()=>connected?loadFiles():connect();
+$('btnTok').onclick=()=>{const t=prompt('أدخل التوكن الظاهر في برنامج جسر على الكمبيوتر');if(t){token=t.trim();connect()}};
+connect();
+</script>
+</body></html>
